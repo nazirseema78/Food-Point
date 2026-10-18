@@ -1,0 +1,278 @@
+// Food-Point database schema.
+// All money fields are integers in paise (₹1 = 100).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  CUSTOMER
+  ADMIN
+}
+
+enum OrderType {
+  DELIVERY
+  TAKEAWAY
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PREPARING
+  READY
+  OUT_FOR_DELIVERY
+  DELIVERED
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  COD
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  REFUNDED
+}
+
+enum CouponType {
+  FLAT
+  PERCENT
+}
+
+model User {
+  id           String    @id @default(cuid())
+  name         String
+  email        String    @unique
+  passwordHash String
+  phone        String?
+  role         Role      @default(CUSTOMER)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  orders       Order[]
+  addresses    Address[]
+}
+
+model Address {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label     String?
+  line1     String
+  area      String?
+  city      String
+  pincode   String
+  landmark  String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+// One row today; more branches later without a schema rewrite.
+model Branch {
+  id                String   @id @default(cuid())
+  name              String
+  slug              String   @unique
+  phone             String
+  email             String?
+  addressLine       String
+  city              String
+  logoUrl           String?
+  timezone          String   @default("Asia/Kolkata")
+  /// { mon: { open: "11:00", close: "23:00", closed: false }, ... }
+  openingHours      Json
+  /// Manual switch: false pauses all ordering regardless of hours.
+  acceptingOrders   Boolean  @default(true)
+  deliveryEnabled   Boolean  @default(true)
+  takeawayEnabled   Boolean  @default(true)
+  deliveryFee       Int      @default(0)
+  freeDeliveryAbove Int?
+  minOrder          Int      @default(0)
+  /// Basis points: 500 = 5%.
+  taxRateBps        Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  orders            Order[]
+}
+
+model Category {
+  id          String    @id @default(cuid())
+  name        String
+  slug        String    @unique
+  description String?
+  imageUrl    String?
+  sortOrder   Int       @default(0)
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  products    Product[]
+
+  @@index([isActive, sortOrder])
+}
+
+model Product {
+  id          String           @id @default(cuid())
+  categoryId  String
+  category    Category         @relation(fields: [categoryId], references: [id])
+  name        String
+  slug        String           @unique
+  description String?
+  /// Used when the product has no variants.
+  basePrice   Int
+  isVeg       Boolean          @default(true)
+  isAvailable Boolean          @default(true)
+  isFeatured  Boolean          @default(false)
+  /// false = archived (soft delete).
+  isActive    Boolean          @default(true)
+  sortOrder   Int              @default(0)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  images      ProductImage[]
+  variants    ProductVariant[]
+  addonGroups AddonGroup[]
+  orderItems  OrderItem[]
+
+  @@index([categoryId, isActive, sortOrder])
+  @@index([isFeatured])
+}
+
+model ProductImage {
+  id        String  @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  url       String
+  publicId  String?
+  sortOrder Int     @default(0)
+
+  @@index([productId])
+}
+
+/// Sizes such as Regular / Medium / Large. `price` is the full item price.
+model ProductVariant {
+  id        String  @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name      String
+  price     Int
+  sortOrder Int     @default(0)
+
+  @@index([productId])
+}
+
+model AddonGroup {
+  id        String  @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name      String
+  minSelect Int     @default(0)
+  maxSelect Int     @default(1)
+  sortOrder Int     @default(0)
+  addons    Addon[]
+
+  @@index([productId])
+}
+
+model Addon {
+  id          String     @id @default(cuid())
+  groupId     String
+  group       AddonGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  name        String
+  price       Int
+  isAvailable Boolean    @default(true)
+  sortOrder   Int        @default(0)
+
+  @@index([groupId])
+}
+
+model Order {
+  id            String             @id @default(cuid())
+  orderNumber   String             @unique
+  branchId      String
+  branch        Branch             @relation(fields: [branchId], references: [id])
+  userId        String?
+  user          User?              @relation(fields: [userId], references: [id])
+  customerName  String
+  customerPhone String
+  customerEmail String?
+  type          OrderType
+  addressLine   String?
+  area          String?
+  city          String?
+  pincode       String?
+  landmark      String?
+  notes         String?
+  subtotal      Int
+  discount      Int                @default(0)
+  deliveryFee   Int                @default(0)
+  tax           Int                @default(0)
+  total         Int
+  couponId      String?
+  coupon        Coupon?            @relation(fields: [couponId], references: [id])
+  couponCode    String?
+  paymentMethod PaymentMethod      @default(COD)
+  paymentStatus PaymentStatus      @default(PENDING)
+  status        OrderStatus        @default(PENDING)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  items         OrderItem[]
+  events        OrderStatusEvent[]
+
+  @@index([branchId, status, createdAt])
+  @@index([customerPhone])
+  @@index([userId])
+}
+
+/// Snapshot of what was ordered; never changes when the product is edited later.
+model OrderItem {
+  id          String   @id @default(cuid())
+  orderId     String
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId   String?
+  product     Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  productName String
+  variantName String?
+  /// [{ name: "Extra cheese", price: 3000 }]
+  addons      Json
+  unitPrice   Int
+  quantity    Int
+  lineTotal   Int
+
+  @@index([orderId])
+}
+
+model OrderStatusEvent {
+  id        String      @id @default(cuid())
+  orderId   String
+  order     Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  status    OrderStatus
+  note      String?
+  createdAt DateTime    @default(now())
+
+  @@index([orderId])
+}
+
+model Coupon {
+  id          String     @id @default(cuid())
+  code        String     @unique
+  description String?
+  type        CouponType
+  /// FLAT: paise. PERCENT: whole percent (10 = 10%).
+  value       Int
+  maxDiscount Int?
+  minOrder    Int        @default(0)
+  startsAt    DateTime?
+  expiresAt   DateTime?
+  usageLimit  Int?
+  usedCount   Int        @default(0)
+  isActive    Boolean    @default(true)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  orders      Order[]
+}
